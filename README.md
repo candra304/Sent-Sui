@@ -1,0 +1,3 @@
+## cara pasang 
+```
+npm install
