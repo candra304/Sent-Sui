@@ -122,10 +122,22 @@ async function main() {
     recipients = [r];
   }
 
-  const amountInput = await prompt(`Masukkan jumlah yang dikirim ke tiap penerima (dalam SUI): `);
-  const amount = parseFloat(amountInput);
-  if (isNaN(amount) || amount <= 0) {
-    logger.error('Jumlah tidak valid.');
+  const amountOption = await prompt(`Pilihan jumlah transfer:\n1. Input jumlah tetap\n2. Kirim 99.9% dari saldo\nPilih (1/2): `);
+  let amount = 0;
+  let usePercentage = false;
+
+  if (amountOption === '1') {
+    const amountInput = await prompt(`Masukkan jumlah yang dikirim ke tiap penerima (dalam SUI): `);
+    amount = parseFloat(amountInput);
+    if (isNaN(amount) || amount <= 0) {
+      logger.error('Jumlah tidak valid.');
+      return;
+    }
+  } else if (amountOption === '2') {
+    usePercentage = true;
+    logger.info('Akan mengirim 99.9% dari saldo setiap wallet');
+  } else {
+    logger.error('Pilihan tidak valid.');
     return;
   }
 
@@ -139,16 +151,36 @@ async function main() {
       const bot = new SuiTransferBot(pkList[i]);
       logger.result('Address', bot.address);
 
-      const balance = await bot.getBalance();
-      logger.result('Balance', (Number(balance) / 1e9).toFixed(4) + ' SUI');
+      const balanceInMist = await bot.getBalance();
+      const balanceSui = Number(balanceInMist) / 1e9;
+      logger.result('Balance', balanceSui.toFixed(4) + ' SUI');
 
       for (const to of recipients) {
-        if (balance < BigInt(amount * 1e9)) {
+        let sendAmount = amount;
+        if (usePercentage) {
+          // Calculate 99.9% of balance in MIST (1 SUI = 1e9 MIST)
+          const sendAmountMist = (balanceInMist * 999n) / 1000n; // 99.9% calculation using integer math
+          
+          // Leave some for gas (0.1 SUI)
+          const minGas = BigInt(0.1 * 1e9);
+          if (sendAmountMist <= minGas) {
+            logger.warning('Saldo tidak cukup untuk transfer, lewati...');
+            continue;
+          }
+          
+          const finalSendAmountMist = sendAmountMist - minGas;
+          sendAmount = Number(finalSendAmountMist) / 1e9;
+          
+          logger.info(`Mengirim 99.9% dari saldo: ${sendAmount.toFixed(4)} SUI`);
+        }
+
+        if (balanceInMist < BigInt(sendAmount * 1e9)) {
           logger.warning('Saldo tidak cukup, lewati...');
           continue;
         }
-        logger.processing(`Mengirim ${amount} SUI ke ${to}`);
-        const res = await bot.transferSui(to, amount);
+        
+        logger.processing(`Mengirim ${sendAmount.toFixed(4)} SUI ke ${to}`);
+        const res = await bot.transferSui(to, sendAmount);
         logger.success(`Sukses. TX: ${res.digest}`);
       }
     } catch (err) {
@@ -165,4 +197,3 @@ main().catch(err => {
   logger.error(`Fatal error: ${err.message}`);
   process.exit(1);
 });
-
